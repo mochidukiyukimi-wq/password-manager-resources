@@ -198,6 +198,11 @@ class PatternRegexpToPasswordRulesConverterTest {
                 name: "Hyphen at beginning (should stay at front)",
                 regexp: "^(?=.*[0-9])[a-zA-Z0-9-!@#$]{8,20}$",
                 expected: "required: digit; allowed: lower, upper, [-!@#$]; minlength: 8; maxlength: 20;"
+            },
+            {
+                name: "Full ranges beside a literal hyphen",
+                regexp: "^[a-zxA-Z-y]{8,}$",
+                expected: "allowed: lower, upper, [-]; minlength: 8;"
             }
         ];
 
@@ -244,6 +249,17 @@ class PatternRegexpToPasswordRulesConverterTest {
             console.log(`Status:   ${passed ? '✅ PASS' : '❌ FAIL'}\n`);
             this.recordResult(passed);
         });
+
+        const escapedRegexp = "^(?=.*[\\!\\@])[a-zA-Z0-9\\!\\@]{8,}$";
+        const escapedExpected = "required: [!@]; allowed: lower, upper, digit; minlength: 8;";
+        const escapedResult = PatternRegexpToPasswordRulesConverter.convert(escapedRegexp);
+        const escapedPassed = escapedResult === escapedExpected;
+
+        console.log("Test: Escaped special chars in lookahead");
+        console.log(`Expected: ${escapedExpected}`);
+        console.log(`Got:      ${escapedResult}`);
+        console.log(`Status:   ${escapedPassed ? '✅ PASS' : '❌ FAIL'}\n`);
+        this.recordResult(escapedPassed);
     }
 
     testCharacterClassNormalization() {
@@ -279,6 +295,11 @@ class PatternRegexpToPasswordRulesConverterTest {
                 name: "Both hyphen and bracket (escaped) in lookahead",
                 regexp: "^(?=.*[\\]-!@])(?=.*[0-9])[a-zA-Z0-9\\]-!@]{8,20}$",
                 expected: "required: [-!@]]; required: digit; allowed: lower, upper; minlength: 8; maxlength: 20;"
+            },
+            {
+                name: "Caret is a literal when it does not lead the character class",
+                regexp: "^[a-zA-Z0-9!@#$%^&*]{8,}$",
+                expected: "allowed: lower, upper, digit, [!@#$%^&*]; minlength: 8;"
             }
         ];
 
@@ -418,6 +439,11 @@ class PatternRegexpToPasswordRulesConverterTest {
                 name: "Escaped backslash in main character class",
                 regexp: "^(?=.*[0-9])[a-z0-9\\\\]{8,20}$",
                 expected: "required: digit; allowed: lower, [\\]; minlength: 8; maxlength: 20;"
+            },
+            {
+                name: "\\d in main character class without a lookahead",
+                regexp: "^[a-z\\d]{8,}$",
+                expected: "allowed: lower, digit; minlength: 8;"
             }
         ];
 
@@ -470,6 +496,36 @@ class PatternRegexpToPasswordRulesConverterTest {
             {
                 name: "Regex with quantifier on lookahead",
                 regexp: "^(?=.*[0-9]){2}[a-z0-9]{8,20}$",
+                shouldBeNull: true
+            },
+            {
+                name: "Partial range in lookahead",
+                regexp: "^(?=.*[a-y])[a-zA-Z0-9]{8,}$",
+                shouldBeNull: true
+            },
+            {
+                name: "Partial range in main character class",
+                regexp: "^[a-z2-9]{8,}$",
+                shouldBeNull: true
+            },
+            {
+                name: "Negated class in lookahead",
+                regexp: "^(?=.*[0-9])(?=.*[^a-zA-Z0-9])[a-zA-Z0-9!@#$]{8,64}$",
+                shouldBeNull: true
+            },
+            {
+                name: "Negated class in main character class",
+                regexp: "^[^a-z]{8,}$",
+                shouldBeNull: true
+            },
+            {
+                name: "Whitespace escape in main character class",
+                regexp: "^[a-zA-Z0-9\\s]{8,20}$",
+                shouldBeNull: true
+            },
+            {
+                name: "Enumerated alphanumeric class in lookahead",
+                regexp: "^(?=.*[0123456789])[a-zA-Z0-9]{8,20}$",
                 shouldBeNull: true
             }
         ];

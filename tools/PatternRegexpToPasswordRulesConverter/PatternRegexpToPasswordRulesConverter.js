@@ -104,6 +104,18 @@ class PatternRegexpToPasswordRulesConverter {
             return null;
         }
 
+        if (this.#containsUnsupportedAlphanumericRange(charClassMatch[1])) {
+            console.warn("PatternRegexpToPasswordRulesConverter: Main character class contains an unsupported alphanumeric range");
+            console.warn("Pattern:", regexp);
+            return null;
+        }
+
+        if (this.#containsUnrepresentableClass(charClassMatch[1])) {
+            console.warn("PatternRegexpToPasswordRulesConverter: Main character class cannot be represented exactly");
+            console.warn("Pattern:", regexp);
+            return null;
+        }
+
         // Parse the validated components
         const required = this.#parseLookaheads(lookaheads);
         const allowed = this.#parseCharacterClassFromMatch(charClassMatch, required);
@@ -183,8 +195,105 @@ class PatternRegexpToPasswordRulesConverter {
                     return false;
                 }
             }
+
+            if (this.#containsUnsupportedAlphanumericRange(lookahead)) {
+                return false;
+            }
+
+            if (this.#containsUnrepresentableClass(lookahead)) {
+                return false;
+            }
+
+            if (this.#lookaheadHasNoRepresentableRequirement(lookahead)) {
+                return false;
+            }
         }
         return true;
+    }
+
+    /**
+     * Check for alphanumeric ranges the converter cannot represent exactly
+     * @private
+     */
+    static #containsUnsupportedAlphanumericRange(charClass) {
+        const supportedRanges = new Set(["a-z", "A-Z", "0-9"]);
+        const isAlphanumeric = (character) => /[a-zA-Z0-9]/.test(character);
+
+        for (let index = 0; index < charClass.length; ++index) {
+            if (charClass[index] === "\\" && index + 1 < charClass.length) {
+                ++index;
+                continue;
+            }
+
+            const range = charClass.substring(index, index + 3);
+            if (range.length === 3 && range[1] === "-" && isAlphanumeric(range[0]) && isAlphanumeric(range[2])) {
+                if (!supportedRanges.has(range)) {
+                    return true;
+                }
+
+                index += 2;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Check for character classes the converter cannot represent exactly
+     *
+     * These differ from an unsupported range in that the output is still well formed,
+     * so nothing downstream flags it; the rule simply does not mean what the pattern
+     * meant. They are rejected rather than converted.
+     * @private
+     */
+    static #containsUnrepresentableClass(charClass) {
+        // A leading '^' negates the class. Password Rules cannot express negation, and
+        // the '^' is otherwise read as a literal member, which inverts the meaning:
+        // '[^a-z]' converts to 'allowed: lower, [^]'. A '^' elsewhere in the class is a
+        // legitimate literal and stays supported.
+        if (charClass.startsWith("^")) {
+            return true;
+        }
+
+        // An escape whose payload is alphanumeric is removed by the alphanumeric cleanup
+        // in the parsers before escapes are unescaped, leaving a bare backslash that is
+        // emitted as a literal: '[a-zA-Z0-9\s]' converts to 'allowed: ..., [\]'.
+        // \d and \w are the only escapes the converter expands, so they stay supported.
+        for (let index = 0; index < charClass.length - 1; ++index) {
+            if (charClass[index] !== "\\") {
+                continue;
+            }
+
+            const payload = charClass[index + 1];
+            if (/[a-zA-Z0-9]/.test(payload) && payload !== "d" && payload !== "w") {
+                return true;
+            }
+
+            ++index;
+        }
+
+        return false;
+    }
+
+    /**
+     * Check for a lookahead whose requirement cannot be expressed
+     *
+     * A lookahead only maps to a 'required:' tag if it resolves to a standard range or
+     * leaves a non-alphanumeric residue. An enumerated alphanumeric class such as
+     * '[0123456789]' or '[abc]' resolves to neither, and the requirement is currently
+     * dropped while the rest of the rule is still emitted.
+     * @private
+     */
+    static #lookaheadHasNoRepresentableRequirement(lookahead) {
+        const expanded = lookahead.replace(/\\d/g, "0-9").replace(/\\w/g, "a-zA-Z0-9_");
+
+        if (["0-9", "A-Z", "a-z"].some((range) => expanded.includes(range))) {
+            return false;
+        }
+
+        // Mirrors the residue calculation in #parseLookaheads.
+        const remaining = expanded.replace(/[a-zA-Z0-9]/g, "").replace(/\\(.)/g, "$1");
+        return remaining.length === 0;
     }
 
     /**
@@ -218,6 +327,9 @@ class PatternRegexpToPasswordRulesConverter {
 
             // Remove stray single letters/digits left from range edges
             remaining = remaining.replace(/[a-zA-Z0-9]/g, "");
+
+            // Unescape regexp escape sequences after expanding shorthand classes.
+            remaining = remaining.replace(/\\(.)/g, "$1");
 
             if (types.length > 0 && remaining.length === 0) {
                 // Pure range-based, possibly combined (e.g., 'upper, lower')
